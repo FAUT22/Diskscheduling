@@ -120,6 +120,37 @@
             border-color: var(--primary);
         }
 
+        /* Direction Controls */
+        .direction-controls {
+            display: none; /* Hidden by default */
+            background: #eff6ff;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #bfdbfe;
+            text-align: center;
+        }
+        
+        .direction-controls.visible {
+            display: block;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        .radio-group {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .radio-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-weight: normal;
+            color: #1e293b;
+        }
+
         .action-area {
             text-align: center;
             margin-top: 20px;
@@ -194,6 +225,11 @@
             margin-bottom: 20px;
             min-height: 40px;
         }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
 <body>
@@ -223,6 +259,21 @@
             <button onclick="selectAlgo('SSTF')" id="btn-SSTF" class="algo-btn">SSTF</button>
             <button onclick="selectAlgo('SCAN')" id="btn-SCAN" class="algo-btn">SCAN (Elevator)</button>
             <button onclick="selectAlgo('CSCAN')" id="btn-CSCAN" class="algo-btn">C-SCAN</button>
+        </div>
+
+        <!-- Direction Controls (Only for SCAN/C-SCAN) -->
+        <div id="directionControls" class="direction-controls">
+            <label>Start-Richtung wählen:</label>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" name="direction" value="DOWN" checked>
+                    Abwärts (Richtung 0)
+                </label>
+                <label class="radio-label">
+                    <input type="radio" name="direction" value="UP">
+                    Aufwärts (Richtung 200)
+                </label>
+            </div>
         </div>
         
         <div class="algo-desc" id="algo-desc">
@@ -268,9 +319,9 @@
     // Beschreibungen
     const descriptions = {
         'FCFS': 'First Come First Serve: Die Anfragen werden strikt der Reihe nach bearbeitet.',
-        'SSTF': 'Shortest Seek Time First: Der Kopf springt immer zur am nächsten liegenden, noch nicht bearbeiteten Anfrage.',
-        'SCAN': 'SCAN: Der Kopf bewegt sich erst zur 0 (oder 200) und nimmt unterwegs alle Anfragen mit, dann kehrt er um.',
-        'CSCAN': 'C-SCAN: Arbeitet nur in eine Richtung (hier nach oben). Sprung vom Ende zum Anfang zählt nicht zur Distanz.'
+        'SSTF': 'Shortest Seek Time First: Der Kopf springt immer zur am nächsten liegenden, noch nicht bearbeiteten Anfrage. (Richtung ist dynamisch)',
+        'SCAN': 'SCAN: Der Kopf bewegt sich in die gewählte Richtung bis zum Rand (0 oder 200), nimmt Anfragen mit, und kehrt dann um.',
+        'CSCAN': 'C-SCAN: Arbeitet nur in die gewählte Richtung. Am Ende springt der Kopf zum anderen Ende (ohne Distanzkosten) und macht weiter.'
     };
 
     function selectAlgo(algo) {
@@ -278,6 +329,14 @@
         document.querySelectorAll('.algo-btn').forEach(b => b.classList.remove('active'));
         document.getElementById(`btn-${algo}`).classList.add('active');
         document.getElementById('algo-desc').innerText = descriptions[algo];
+
+        // Richtungswahl nur bei SCAN und C-SCAN anzeigen
+        const dirControls = document.getElementById('directionControls');
+        if (algo === 'SCAN' || algo === 'CSCAN') {
+            dirControls.classList.add('visible');
+        } else {
+            dirControls.classList.remove('visible');
+        }
     }
 
     function clearCanvas() {
@@ -320,6 +379,9 @@
         // 1. Eingaben holen & Validieren
         const startInput = document.getElementById('startPos').value;
         const queueInput = document.getElementById('queue').value;
+        
+        // Richtung auslesen
+        const direction = document.querySelector('input[name="direction"]:checked').value;
 
         if (startInput.trim() === "" || queueInput.trim() === "") {
             errorDiv.innerText = "Bitte Startposition und Anforderungen eingeben!";
@@ -346,8 +408,8 @@
         switch(currentAlgo) {
             case 'FCFS': result = calcFCFS(start, queue); break;
             case 'SSTF': result = calcSSTF(start, queue); break;
-            case 'SCAN': result = calcSCAN(start, queue); break;
-            case 'CSCAN': result = calcCSCAN(start, queue); break;
+            case 'SCAN': result = calcSCAN(start, queue, direction); break;
+            case 'CSCAN': result = calcCSCAN(start, queue, direction); break;
         }
 
         // 3. Text-Ergebnisse anzeigen
@@ -388,80 +450,129 @@
         return { path, distance };
     }
 
-    function calcSCAN(start, queue) {
+    function calcSCAN(start, queue, direction) {
         let current = start;
         let distance = 0;
         let path = [start];
         
-        // Sortierung für SCAN
-        let left = queue.filter(x => x < start).sort((a, b) => b - a); // Absteigend
-        let right = queue.filter(x => x >= start).sort((a, b) => a - b); // Aufsteigend
-
-        // Wir simulieren hier: Erst nach Links (Richtung 0), dann nach Rechts
-        // (Wie oft in Schulbeispielen, wenn nicht anders angegeben)
+        // Sortieren
+        let downList = queue.filter(x => x < start).sort((a, b) => b - a); // Absteigend (für den Weg nach unten)
+        let upList = queue.filter(x => x >= start).sort((a, b) => a - b); // Aufsteigend (für den Weg nach oben)
         
-        // 1. Links abarbeiten
-        for (let x of left) {
-            path.push(x);
-            distance += Math.abs(current - x);
-            current = x;
-        }
-        
-        // Wenn wir links waren und noch rechts welche sind, müssen wir ggf. die 0 berühren (Umkehrpunkt)
-        // Außer wir sind schon bei 0 oder es gibt keine rechts
-        if (left.length > 0 || start > 0) {
-             // Einfache Heuristik: Wenn wir Richtung 0 gehen, gehen wir bis zur 0 wenn nötig
-             // Im strikten SCAN geht man bis zum Rand.
-             if (right.length > 0) {
-                if (current !== 0) {
-                    distance += Math.abs(current - 0);
-                    current = 0;
-                    path.push(0);
+        // SCAN Logic mit Richtung
+        if (direction === 'DOWN') {
+            // 1. Erst Runter
+            for (let x of downList) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
+            // Wenn wir runter gegangen sind und danach noch hoch müssen -> Rand 0 berühren
+            if (upList.length > 0 || start > 0) {
+                // Nur zum Rand, wenn noch was auf der anderen Seite ist, oder wir den Rand berühren müssen (Standard SCAN)
+                // Wir nehmen an: Wir müssen umkehren -> also bis 0.
+                if (upList.length > 0 && current !== 0) {
+                     distance += Math.abs(current - 0);
+                     current = 0;
+                     path.push(0);
                 }
-             }
-        }
+            }
+            // 2. Dann Hoch
+            for (let x of upList) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
 
-        // 2. Rechts abarbeiten
-        for (let x of right) {
-            path.push(x);
-            distance += Math.abs(current - x);
-            current = x;
+        } else {
+            // DIRECTION UP
+            // 1. Erst Hoch
+            for (let x of upList) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
+            // Wenn wir hoch gegangen sind und danach noch runter müssen -> Rand 200 berühren
+            if (downList.length > 0 || start < 200) {
+                if (downList.length > 0 && current !== 200) {
+                    distance += Math.abs(current - 200);
+                    current = 200;
+                    path.push(200);
+                }
+            }
+            // 2. Dann Runter
+            for (let x of downList) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
         }
 
         return { path, distance };
     }
 
-    function calcCSCAN(start, queue) {
+    function calcCSCAN(start, queue, direction) {
         let current = start;
         let distance = 0;
         let path = [start];
 
-        let right = queue.filter(x => x >= start).sort((a, b) => a - b);
-        let left = queue.filter(x => x < start).sort((a, b) => a - b); // Auch aufsteigend sortiert
-
-        // 1. Nach Rechts bis zum Ende
-        for (let x of right) {
-            path.push(x);
-            distance += Math.abs(current - x);
-            current = x;
-        }
+        let upList = queue.filter(x => x >= start).sort((a, b) => a - b);
+        let downList = queue.filter(x => x < start).sort((a, b) => a - b); // Beide aufsteigend für C-SCAN UP
         
-        // Bis 200 gehen (Rand)
-        if (current !== 200) {
-            distance += Math.abs(current - 200);
-            current = 200;
+        if (direction === 'UP') {
+            // Standard C-SCAN (nach oben, Sprung nach unten, wieder nach oben)
+            
+            // 1. Nach oben
+            for (let x of upList) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
+            // Bis 200
+            if (current !== 200) {
+                distance += Math.abs(current - 200);
+                current = 200;
+                path.push(200);
+            }
+            // Sprung nach 0 (kostenlos)
+            path.push(0);
+            current = 0;
+            
+            // 2. Von 0 weiter nach oben (Rest)
+            for (let x of downList) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
+            
+        } else {
+            // DIRECTION DOWN (C-SCAN Reversed)
+            // Wir müssen die Listen umkehren für "Abwärtsbewegung"
+            let downListRev = queue.filter(x => x <= start).sort((a, b) => b - a);
+            let upListRev = queue.filter(x => x > start).sort((a, b) => b - a);
+
+            // 1. Nach unten
+            for (let x of downListRev) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
+            // Bis 0
+            if (current !== 0) {
+                distance += Math.abs(current - 0);
+                current = 0;
+                path.push(0);
+            }
+            // Sprung nach 200 (kostenlos)
             path.push(200);
-        }
+            current = 200;
 
-        // 2. Sprung nach 0 (Zählt NICHT zur Distanz)
-        path.push(0);
-        current = 0;
-
-        // 3. Von 0 weiter nach oben
-        for (let x of left) {
-            path.push(x);
-            distance += Math.abs(current - x);
-            current = x;
+            // 2. Von 200 weiter nach unten (Rest)
+            for (let x of upListRev) {
+                path.push(x);
+                distance += Math.abs(current - x);
+                current = x;
+            }
         }
 
         return { path, distance };
@@ -470,7 +581,7 @@
     // --- Animation ---
 
     function animatePath(pathPoints) {
-        let progress = 0; // 0.0 bis 1.0 (über den gesamten Pfad, vereinfacht pro Segment)
+        let progress = 0;
         let segmentIndex = 0;
         let segmentProgress = 0;
         
@@ -481,14 +592,12 @@
         const stepY = height / (pathPoints.length - 1 || 1);
 
         function draw() {
-            // Geschwindigkeit dynamisch auslesen
             const sliderVal = document.getElementById('speedRange').value;
-            // Mapping 1-100 auf ca. 0.005 bis 0.1
             const speed = sliderVal / 1000; 
 
             clearCanvas();
 
-            // Zeichne bisher abgeschlossene Segmente
+            // Zeichne Pfad
             ctx.beginPath();
             ctx.strokeStyle = '#2563eb';
             ctx.lineWidth = 3;
@@ -497,60 +606,54 @@
             for (let i = 0; i < segmentIndex; i++) {
                 let p1 = pathPoints[i];
                 let p2 = pathPoints[i+1];
-                
                 let x1 = padding + (p1 * trackStep);
                 let y1 = padding + (i * stepY);
                 let x2 = padding + (p2 * trackStep);
                 let y2 = padding + ((i+1) * stepY);
 
-                // C-SCAN Sprung Check (200 -> 0)
-                if (p1 === 200 && p2 === 0) {
-                    ctx.stroke(); // Zeichne bisheriges
-                    
-                    // Gestrichelte Linie für Sprung
+                // Check für Sprünge (200->0 oder 0->200)
+                const isJump = (p1 === 200 && p2 === 0) || (p1 === 0 && p2 === 200);
+
+                if (isJump) {
+                    ctx.stroke(); 
                     ctx.beginPath();
-                    ctx.strokeStyle = 'rgba(37, 99, 235, 0.3)';
+                    ctx.strokeStyle = 'rgba(37, 99, 235, 0.3)'; // Hell für Sprung
                     ctx.setLineDash([5, 5]);
                     ctx.moveTo(x1, y1);
                     ctx.lineTo(x2, y2);
                     ctx.stroke();
-                    
-                    // Reset für normale Linie
                     ctx.setLineDash([]);
                     ctx.beginPath();
                     ctx.strokeStyle = '#2563eb';
                     ctx.moveTo(x2, y2);
                 } else {
                     ctx.lineTo(x2, y2);
-                    ctx.stroke(); // Segment sofort zeichnen damit Punkte drauf können
+                    ctx.stroke();
                     ctx.beginPath(); 
                     ctx.moveTo(x2, y2);
                 }
                 
-                // Punkte malen (rückwirkend)
                 ctx.fillStyle = '#2563eb';
                 ctx.fillRect(x1 - 3, y1 - 3, 6, 6);
-                // Letzter Punkt
                 if (i === segmentIndex - 1) ctx.fillRect(x2 - 3, y2 - 3, 6, 6);
             }
 
-            // Zeichne aktuelles, animiertes Segment
+            // Aktuelles Segment animieren
             if (segmentIndex < pathPoints.length - 1) {
                 let pStart = pathPoints[segmentIndex];
                 let pEnd = pathPoints[segmentIndex + 1];
                 
                 let xStart = padding + (pStart * trackStep);
                 let yStart = padding + (segmentIndex * stepY);
-                
                 let xEnd = padding + (pEnd * trackStep);
                 let yEnd = padding + ((segmentIndex + 1) * stepY);
                 
-                // Interpolation
                 let currX = xStart + (xEnd - xStart) * segmentProgress;
                 let currY = yStart + (yEnd - yStart) * segmentProgress;
 
-                // Spezialfall C-SCAN Animation
-                if (pStart === 200 && pEnd === 0) {
+                const isJump = (pStart === 200 && pEnd === 0) || (pStart === 0 && pEnd === 200);
+
+                if (isJump) {
                     ctx.stroke();
                     ctx.beginPath();
                     ctx.strokeStyle = 'rgba(37, 99, 235, 0.3)';
@@ -560,23 +663,16 @@
                     ctx.stroke();
                     ctx.setLineDash([]);
                 } else {
-                    // Linie zum aktuellen Punkt ziehen (aber Startpunkt muss moveto sein)
-                    // Da wir oben im Loop abgesetzt haben, müssen wir hier ansetzen
-                    // Wenn Loop lief: moveTo ist am Ende von Loop.
-                    // Wenn Loop 0 war: moveTo ist am Start.
-                    // Das passt, da `ctx` stateful ist. Aber sicherheitshalber:
                     ctx.moveTo(xStart, yStart);
                     ctx.lineTo(currX, currY);
                     ctx.stroke();
                 }
 
-                // Head (Roter Punkt)
                 ctx.fillStyle = '#ef4444';
                 ctx.beginPath();
                 ctx.arc(currX, currY, 6, 0, Math.PI*2);
                 ctx.fill();
 
-                // Fortschritt erhöhen
                 segmentProgress += speed;
                 if (segmentProgress >= 1) {
                     segmentProgress = 0;
@@ -584,17 +680,14 @@
                 }
                 
                 animationId = requestAnimationFrame(draw);
-            } else {
-                // Ende erreicht, sicherstellen dass alles gezeichnet ist
-                // (Der Loop oben zeichnet bis segmentIndex, also alles gut)
             }
         }
 
-        resizeCanvas(); // Initiale Bereinigung
+        resizeCanvas();
         draw();
     }
     
-    // Initial Setup
+    // Init
     resizeCanvas();
 </script>
 </body>
